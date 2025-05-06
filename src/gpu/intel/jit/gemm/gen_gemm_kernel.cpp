@@ -23,6 +23,9 @@
 #include "gpu/intel/jit/utils/ngen_type_bridge.hpp"
 #include "gpu/intel/utils.hpp"
 
+#include "gpu/intel/jit/gemm/ir/builder.hpp"
+#include "gpu/intel/jit/gemm/ir/kernel_desc.hpp"
+
 namespace dnnl {
 namespace impl {
 namespace gpu {
@@ -926,6 +929,16 @@ status_t gen_gemm_kernel_t::get_kernel(
         compute::kernel_t &kernel, const compute::compute_engine_t *engine) {
     init_interface();
     maybe_print_verbose();
+
+    if (gpu_utils::dev_getenv("enable_gemm_ir", false)) {
+        auto gemm_desc = gemmstone::gemm_ir_desc_t(*desc()->problem(),
+                *desc()->strategy(), interface_, hw_t(engine));
+        auto stmt = build_ir(gemm_desc);
+        auto binary = lower_ir(stmt, gemm_desc.compile_ctx());
+
+        return engine->create_kernel_from_binary(
+                kernel, binary.data, gemm_desc.kernel_name(), {});
+    }
 
 #define ARCH_DISPATCH(arch) \
     case ngen::HW::arch: { \

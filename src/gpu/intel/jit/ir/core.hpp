@@ -258,6 +258,30 @@ static auto type_kind_names = nstl::to_array({
 });
 GPU_DEFINE_PARSE_ENUM(type_kind_t, type_kind_names)
 
+inline type_kind_t get_kind(ngen::DataType t) {
+    switch (t) {
+        case ngen::DataType::uq: return type_kind_t::u64;
+        case ngen::DataType::q: return type_kind_t::s64;
+        case ngen::DataType::ud: return type_kind_t::u32;
+        case ngen::DataType::d: return type_kind_t::s32;
+        case ngen::DataType::uw: return type_kind_t::u16;
+        case ngen::DataType::w: return type_kind_t::s16;
+        case ngen::DataType::ub: return type_kind_t::u8;
+        case ngen::DataType::b: return type_kind_t::s8;
+        case ngen::DataType::u4: return type_kind_t::u4;
+        case ngen::DataType::s4: return type_kind_t::s4;
+
+        case ngen::DataType::df: return type_kind_t::f64;
+        case ngen::DataType::f: return type_kind_t::f32;
+        case ngen::DataType::tf32: return type_kind_t::tf32;
+        case ngen::DataType::hf: return type_kind_t::f16;
+        case ngen::DataType::bf: return type_kind_t::bf16;
+        case ngen::DataType::bf8: return type_kind_t::bf8;
+        case ngen::DataType::hf8: return type_kind_t::hf8;
+        default: return type_kind_t::undef;
+    }
+}
+
 class type_t {
 public:
     static type_t undef() { return type_t(type_kind_t::undef); }
@@ -353,8 +377,9 @@ public:
     static type_t byte(int elems = 1, bool is_mutable = false) {
         return type_t(type_kind_t::byte, elems, is_mutable);
     }
-    static type_t byte_ptr(int elems = 1, bool is_mutable = false) {
-        return type_t(type_kind_t::byte, elems).with_ptr();
+    static type_t byte_ptr(
+            int elems = 1, bool is_slm = false, bool is_mutable = false) {
+        return type_t(type_kind_t::byte, elems).with_ptr(is_slm);
     }
     static type_t dword(int elems = 1, bool is_mutable = false) {
         return type_t(type_kind_t::dword, elems, is_mutable);
@@ -442,6 +467,9 @@ public:
     type_t(type_kind_t kind, uint32_t elems = 1, bool is_mutable = false)
         : kind_(kind), elems_(elems), is_mutable_(is_mutable) {}
 
+    type_t(ngen::DataType type, uint32_t elems = 1, bool is_mutable = false)
+        : type_t(get_kind(type), elems, is_mutable) {}
+
     type_t(const std::string &s) : elems_(1) {
 #define CASE(x) \
     if (to_string(type_kind_t::x) == s) { \
@@ -504,6 +532,8 @@ public:
     int elems() const { return elems_; }
 
     bool is_ptr() const { return is_ptr_; }
+
+    bool is_slm() const { return is_slm_; }
 
     bool operator==(const type_t &other) const {
         return (kind() == other.kind()) && (elems() == other.elems())
@@ -625,9 +655,10 @@ public:
         return copy;
     }
 
-    type_t with_ptr() const {
+    type_t with_ptr(bool is_slm = false) const {
         type_t copy = *this;
         copy.is_ptr_ = true;
+        copy.is_slm_ = is_slm;
         return copy;
     }
 
@@ -658,6 +689,7 @@ public:
         if (elems() > 1) oss << "x" << elems();
         if (is_ptr()) oss << "*";
         if (is_mutable()) oss << ".mut";
+        if (is_slm()) oss << ".slm";
         return oss.str();
     }
 
@@ -668,6 +700,7 @@ private:
     int elems_ = 0;
     bool is_ptr_ = false;
     bool is_mutable_ = true;
+    bool is_slm_ = false;
 };
 
 // type_t to dnnl_data_type_t convertor.
