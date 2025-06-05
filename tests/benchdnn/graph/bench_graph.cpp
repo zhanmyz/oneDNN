@@ -57,6 +57,7 @@ void check_correctness(const settings_t &s) {
 
         // Reset the memory size args for the graph after testing.
         reset_graph_mem_req();
+        fw.reset();
 
         parse_result(res, pstr);
         if (has_bench_mode_bit(mode_bit_t::perf)) {
