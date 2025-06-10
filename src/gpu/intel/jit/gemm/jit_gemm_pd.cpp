@@ -176,9 +176,11 @@ int jit_gemm_pd_t::quant_attr_ndims(
     if (attr.has_default_groups()) return mask > 0;
     int count = 0;
     for (int i = d.ndims - 1; i >= 0; --i) {
-        if ((mask & (1 << i))
-                && ((i < batch_dims() && d.dims[i] > 1)
-                        || (d.dims[i] / attr.get_group(i - batch_dims()) > 1)))
+        if (!(mask & (1 << i)))
+		continue;
+	bool batch_dim = i < batch_dims();
+        if ((batch_dim && d.dims[i] > 1)
+                        || (!batch_dim && (d.dims[i] / attr.get_group(i - batch_dims()) > 1 || count)))
             ++count;
     }
     return count;
@@ -345,7 +347,7 @@ bool jit_gemm_pd_t::scales_ok() {
         int cmask_b_sc_ = attr()->scales_.get_mask(DNNL_ARG_B);
         if (!dy_quant_enabled_
                 || (!utils::one_of(eff_a_type(), s4, u4)
-                        && (cmask_b_sc_ != 0xfff || bsc_dims_ > 2)))
+                        && (!per_tensor_mask(cmask_b_sc_, ndims) || bsc_dims_ > 2)))
             return false;
     } else {
         if (!src_scales->has_default_values() && src_scales->get_mask() != 0
@@ -357,9 +359,16 @@ bool jit_gemm_pd_t::scales_ok() {
 }
 
 bool jit_gemm_pd_t::valid_2d_mask(int mask, int ndims) {
-    const int per_tensor_mask = 0xfff;
     return utils::one_of(mask, (1 << (ndims - 1)),
-            (1 << (ndims - 1)) + (1 << (ndims - 2)), per_tensor_mask);
+            (1 << (ndims - 1)) + (1 << (ndims - 2))) || per_tensor_mask(mask, ndims);
+}
+
+bool jit_gemm_pd_t::per_tensor_mask(int mask, int ndims){
+    int per_tensor_eq = 0x0;
+    for (int i = 0; i < ndims; ++i) {
+        per_tensor_eq |= (1 << i);
+    }
+    return (mask == 0xfff || mask == per_tensor_eq);
 }
 
 dim_t jit_gemm_pd_t::ld_binary(int idx) const {
