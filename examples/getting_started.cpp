@@ -427,7 +427,7 @@ void getting_started_tutorial(engine::kind engine_kind) {
     // memory format.
     std::vector<float> relu_image(image_size);
     read_from_dnnl_memory(relu_image.data(), dst_mem);
-    /*
+    // /*
     // Check the results
     for (int n = 0; n < N; ++n)
         for (int h = 0; h < H; ++h)
@@ -447,7 +447,7 @@ void getting_started_tutorial(engine::kind engine_kind) {
                     }
                 }
     // [Check the results]
-    */
+    // */
 }
 
 /// @page getting_started_cpp
@@ -468,6 +468,21 @@ int main(int argc, char **argv) {
     int exit_code = 0;
 
     engine::kind engine_kind = parse_engine_kind(argc, argv);
+
+    size_t engineCount = engine::get_count(engine_kind);
+    std::cout << "Engine kind: " << engine_kind2str_upper(engine_kind)
+              << ", count: " << engineCount << std::endl;
+
+    auto platform = sycl::platform::get_platforms()[0];
+    auto device = platform.get_devices()[0];
+    auto version = device.get_info<sycl::info::device::version>();
+    std::cout << "oneAPI version: " << version << std::endl;
+
+    #if defined(__INTEL_LLVM_COMPILER)
+        std::cout << "__INTEL_LLVM_COMPILER: " << __INTEL_LLVM_COMPILER  << std::endl;
+    #endif
+
+
     try {
         getting_started_tutorial(engine_kind);
     } catch (dnnl::error &e) {
