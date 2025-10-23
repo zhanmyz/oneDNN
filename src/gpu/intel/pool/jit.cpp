@@ -23,6 +23,7 @@
 #include "gpu/intel/jit/ir/tensor_config.hpp"
 #include "gpu/intel/pool/jit/kernel.hpp"
 #include "ngen_register_allocator.hpp"
+#include <cstdio>
 
 namespace dnnl {
 namespace impl {
@@ -140,6 +141,113 @@ status_t gen_fwd_t::init(impl::engine_t *engine) {
         kernel_info_.register_user_arg(make_buffer(t.name), t.arg_key,
                 /*is_input=*/t.is_input && !t.is_output);
     }
+
+    // ===== PRINT POOLING LAYER INFO BEFORE KERNEL GENERATION =====
+    auto &desc = *pd()->desc();
+    auto src_dims = pd()->src_md()->dims;
+    auto dst_dims = pd()->dst_md()->dims;
+    auto ker_dims = desc.kernel;
+    auto str_dims = desc.strides;
+    auto pad_l = desc.padding[0];
+    auto pad_r = desc.padding[1];
+    auto dil_dims = desc.dilation;
+
+    const char* alg_str = (desc.alg_kind == alg_kind::pooling_max) ? "MAX" :
+                          (desc.alg_kind == alg_kind::pooling_avg_include_padding) ? "AVG_P" :
+                          (desc.alg_kind == alg_kind::pooling_avg_exclude_padding) ? "AVG_NP" : "UNKNOWN";
+
+    const char* dt_str = (pd()->src_md()->data_type == data_type::f16) ? "f16" :
+                         (pd()->src_md()->data_type == data_type::f32) ? "f32" :
+                         (pd()->src_md()->data_type == data_type::bf16) ? "bf16" : "unknown";
+
+    // Get layout information
+    auto src_layout_str = cfg_.src_layout().user().str();
+    auto dst_layout_str = cfg_.dst_layout().user().str();
+
+    // Check for post-ops
+    const auto &attr = *pd()->attr();
+    bool has_post_ops = attr.post_ops_.len() > 0;
+
+    // Use printf to ensure output is visible
+    printf("\n============ GENERATING POOLING KERNEL - LAYER INFO ============\n");
+    printf("Algorithm: %s\n", alg_str);
+    printf("Data type: %s\n", dt_str);
+    printf("Source dims [N,C,H,W]: [%d,%d,%d,%d]\n", (int)src_dims[0], (int)src_dims[1], (int)src_dims[2], (int)src_dims[3]);
+    printf("Dest dims [N,C,H,W]: [%d,%d,%d,%d]\n", (int)dst_dims[0], (int)dst_dims[1], (int)dst_dims[2], (int)dst_dims[3]);
+    printf("Has post-ops: %s\n", has_post_ops ? "YES" : "NO");
+    if (has_post_ops) {
+        printf("Post-ops count: %d\n", attr.post_ops_.len());
+        for (int i = 0; i < attr.post_ops_.len(); i++) {
+            auto kind = attr.post_ops_.entry_[i].kind;
+            printf("  Post-op %d: ", i);
+            if (kind == primitive_kind::binary) printf("BINARY\n");
+            else if (kind == primitive_kind::eltwise) printf("ELTWISE\n");
+            else if (kind == primitive_kind::sum) printf("SUM\n");
+            else printf("OTHER (%d)\n", (int)kind);
+        }
+    }
+    printf("Kernel [H,W]: [%d,%d]\n", ker_dims[0], ker_dims[1]);
+    printf("Stride [H,W]: [%d,%d]\n", str_dims[0], str_dims[1]);
+    printf("Padding L [H,W]: [%d,%d]\n", pad_l[0], pad_l[1]);
+    printf("Padding R [H,W]: [%d,%d]\n", pad_r[0], pad_r[1]);
+    printf("Dilation [H,W]: [%d,%d]\n", dil_dims[0], dil_dims[1]);
+    printf("Config n_cuts: %d\n", cfg_.n_cuts());
+    printf("Source layout: %s\n", src_layout_str.c_str());
+    printf("Dest layout: %s\n", dst_layout_str.c_str());
+    printf("\n=== BENCHDNN COMMAND EXPLANATION ===\n");
+    printf("Parameter mapping from this layer to benchdnn:\n");
+    printf("  mb (minibatch) = %d (from src_dims[0] = N)\n", (int)src_dims[0]);
+    printf("  ic (input channels) = %d (from src_dims[1] = C)\n", (int)src_dims[1]);
+    printf("  ih (input height) = %d (from src_dims[2] = H)\n", (int)src_dims[2]);
+    printf("  iw (input width) = %d (from src_dims[3] = W)\n", (int)src_dims[3]);
+    printf("  oh (output height) = %d (from dst_dims[2] = H)\n", (int)dst_dims[2]);
+    printf("  ow (output width) = %d (from dst_dims[3] = W)\n", (int)dst_dims[3]);
+    printf("  kh (kernel height) = %d (from ker_dims[0])\n", ker_dims[0]);
+    printf("  kw (kernel width) = %d (from ker_dims[1])\n", ker_dims[1]);
+    printf("  sh (stride height) = %d (from str_dims[0])\n", str_dims[0]);
+    printf("  sw (stride width) = %d (from str_dims[1])\n", str_dims[1]);
+    printf("  ph (padding height) = %d (from pad_l[0])\n", pad_l[0]);
+    printf("  pw (padding width) = %d (from pad_l[1])\n", pad_l[1]);
+    printf("  dh (dilation height) = %d (from dil_dims[0])\n", dil_dims[0]);
+    printf("  dw (dilation width) = %d (from dil_dims[1])\n", dil_dims[1]);
+    printf("  --tag = layout format (aBcd16b means blocked format with 16-element blocks)\n");
+    printf("          Source layout '%s' suggests using --tag=aBcd16b\n", src_layout_str.c_str());
+    printf("\n=== BENCHDNN COMMAND TO REPRODUCE ===\n");
+    printf("NOTE: benchdnn uses simple memory layout by default.\n");
+    printf("The actual error may only occur with blocked layouts like shown above.\n");
+    printf("Try adding --tag parameter matching the layout if test passes.\n");
+    printf("\nCommand WITHOUT post-ops (use this if post-ops = NO above):\n");
+    printf("set PATH=E:\\openvino\\src\\plugins\\intel_gpu\\thirdparty\\onednn_gpu\\build\\src\\Debug;%%PATH%% && ^\n");
+    printf("E:\\openvino\\src\\plugins\\intel_gpu\\thirdparty\\onednn_gpu\\build\\tests\\benchdnn\\Debug\\benchdnn.exe ^\n");
+    printf("  --pool ^\n");
+    printf("  --engine=gpu ^\n");
+    printf("  --dir=FWD_I ^\n");
+    printf("  --alg=%s ^\n", alg_str);
+    printf("  --dt=%s ^\n", dt_str);
+    printf("  --tag=aBcd16b ^\n");
+    printf("  mb%dic%d_ih%doh%dkh%dsh%ddh%dph%d_iw%dow%dkw%dsw%ddw%dpw%d\n",
+        (int)src_dims[0], (int)src_dims[1], (int)src_dims[2], (int)dst_dims[2],
+        ker_dims[0], str_dims[0], dil_dims[0], pad_l[0],
+        (int)src_dims[3], (int)dst_dims[3], ker_dims[1], str_dims[1], dil_dims[1], pad_l[1]);
+
+    if (has_post_ops) {
+        printf("\nCommand WITH post-ops (use this if post-ops = YES above):\n");
+        printf("set PATH=E:\\openvino\\src\\plugins\\intel_gpu\\thirdparty\\onednn_gpu\\build\\src\\Debug;%%PATH%% && ^\n");
+        printf("E:\\openvino\\src\\plugins\\intel_gpu\\thirdparty\\onednn_gpu\\build\\tests\\benchdnn\\Debug\\benchdnn.exe ^\n");
+        printf("  --pool ^\n");
+        printf("  --engine=gpu ^\n");
+        printf("  --dir=FWD_I ^\n");
+        printf("  --alg=%s ^\n", alg_str);
+        printf("  --dt=%s ^\n", dt_str);
+        printf("  --tag=aBcd16b ^\n");
+        printf("  --attr-post-ops=binary_add:f16:14:aBcd16b ^\n");
+        printf("  mb%dic%d_ih%doh%dkh%dsh%ddh%dph%d_iw%dow%dkw%dsw%ddw%dpw%d\n",
+            (int)src_dims[0], (int)src_dims[1], (int)src_dims[2], (int)dst_dims[2],
+            ker_dims[0], str_dims[0], dil_dims[0], pad_l[0],
+            (int)src_dims[3], (int)dst_dims[3], ker_dims[1], str_dims[1], dil_dims[1], pad_l[1]);
+    }
+    printf("================================================================\n");
+    fflush(stdout);
 
     while (!kernel_) {
         try {

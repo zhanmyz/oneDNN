@@ -186,7 +186,62 @@ public:
 
         if (get_grf_buf_index() + end_off >= reg_buf_->regs()) {
             if (verify_access) {
-                gpu_error_not_expected() << "Invalid access";
+                // Helper lambda to convert HW enum to string
+                auto hw_to_str = [](ngen::HW hw) -> const char* {
+                    switch(hw) {
+                        case ngen::HW::Gen9: return "Gen9";
+                        case ngen::HW::Gen10: return "Gen10";
+                        case ngen::HW::Gen11: return "Gen11";
+                        case ngen::HW::Gen12LP: return "Gen12LP";
+                        case ngen::HW::XeHP: return "XeHP";
+                        case ngen::HW::XeHPG: return "XeHPG";
+                        case ngen::HW::XeHPC: return "XeHPC";
+                        case ngen::HW::Xe2: return "Xe2";
+                        case ngen::HW::Xe3: return "Xe3";
+                        default: return "Unknown";
+                    }
+                };
+
+                // ===== DEBUG: Print detailed register allocation info =====
+                gpu_error_not_expected()
+                    << "\n========== oneDNN GPU JIT: REGISTER BUFFER OVERFLOW ==========\n"
+                    << "THIS IS AN ISSUE IN oneDNN GPU BACKEND - NOT OpenVINO\n"
+                    << "The JIT compiler tried to allocate more registers than available.\n"
+                    << "See pooling layer info above for benchdnn reproduction command.\n"
+                    << "---------------------------------------------------------------\n"
+                    << "  HW Architecture: " << hw_to_str(hw()) << "\n"
+                    << "  GRF size (bytes): " << ngen::GRF::bytes(hw()) << "\n"
+                    << "  GRF size (bits): " << grf_bits << "\n"
+                    << "  Data type: " << static_cast<int>(type) << " (bits: " << type_bits << ")\n"
+                    << "  \n"
+                    << "  Access request:\n"
+                    << "    - offset: " << off << "\n"
+                    << "    - elems: " << elems << "\n"
+                    << "    - total bits needed: " << (elems * type_bits) << "\n"
+                    << "  \n"
+                    << "  Register buffer state:\n"
+                    << "    - bit_offset(): " << bit_offset() << "\n"
+                    << "    - first_bit: " << first_bit << "\n"
+                    << "    - last_bit: " << last_bit << "\n"
+                    << "    - beg_off (GRF index): " << beg_off << "\n"
+                    << "    - end_off (GRF index): " << end_off << "\n"
+                    << "    - get_grf_buf_index(): " << get_grf_buf_index() << "\n"
+                    << "    - reg_buf_->regs() (total GRFs): " << reg_buf_->regs() << "\n"
+                    << "    - reg_buf_->blocks(): " << reg_buf_->blocks() << "\n"
+                    << "    - reg_buf_->block_regs(): " << reg_buf_->block_regs() << "\n"
+                    << "  \n"
+                    << "  Overflow calculation:\n"
+                    << "    - Required GRF index: " << (get_grf_buf_index() + end_off) << "\n"
+                    << "    - Available GRFs: " << reg_buf_->regs() << "\n"
+                    << "    - Overflow by: " << ((get_grf_buf_index() + end_off) - reg_buf_->regs() + 1) << " GRFs\n"
+                    << "  \n"
+                    << "  Register details:\n"
+                    << "    - base(): " << base() << "\n"
+                    << "    - byte_offset(): " << byte_offset() << "\n"
+                    << "    - offset(): " << offset() << "\n"
+                    << "    - hs() (horizontal stride): " << hs() << "\n"
+                    << "    - reg_buf str: " << reg_buf_->str() << "\n"
+                    << "=========================================================\n";
                 throw std::runtime_error("Internal error");
             }
             return false;
